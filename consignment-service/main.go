@@ -1,75 +1,43 @@
+// consignment-service/main.go
 package main
 
 import (
 
-	pb "github.com/bailaohe/shippy/consignment-service/proto/consignment"
-	vesselProto "github.com/bailaohe/shippy/vessel-service/proto/vessel"
-	"golang.org/x/net/context"
-
-	micro "github.com/micro/go-micro"
+	// Import the generated protobuf code
 	"fmt"
 	"log"
+
+	pb "github.com/bailaohe/shippy/consignment-service/proto/consignment"
+	vesselProto "github.com/bailaohe/shippy/vessel-service/proto/vessel"
+	"github.com/micro/go-micro"
+	"os"
 )
 
 const (
-	port = ":50051"
+	defaultHost = "localhost:27017"
 )
 
-type Repository interface {
-	Create(*pb.Consignment) (*pb.Consignment, error)
-	GetAll() []*pb.Consignment
-}
-
-type ConsignmentRepository struct {
-	consignments []*pb.Consignment
-}
-
-func (repo *ConsignmentRepository) Create(consignment *pb.Consignment) (*pb.Consignment, error) {
-	updated := append(repo.consignments, consignment)
-	repo.consignments = updated
-	return consignment, nil
-}
-
-func (repo *ConsignmentRepository) GetAll() []*pb.Consignment {
-	return repo.consignments
-}
-
-type service struct {
-	repo Repository
-	vesselClient vesselProto.VesselServiceClient
-}
-
-func (s *service) CreateConsignment(ctx context.Context, req *pb.Consignment, res *pb.Response) error {
-
-	vesselResponse, err := s.vesselClient.FindAvailable(context.Background(), &vesselProto.Specification{
-		MaxWeight: req.Weight,
-		Capacity: int32(len(req.Containers)),
-	})
-	log.Printf("Found vessel: %s \n", vesselResponse.Vessel.Name)
-	if err != nil {
-		return err
-	}
-
-	req.VesselId = vesselResponse.Vessel.Id
-
-	consignment, err := s.repo.Create(req)
-	if err != nil {
-		return err
-	}
-
-	res.Created = true
-	res.Consignment = consignment
-	return nil
-}
-
-func (s *service) GetConsignments(ctx context.Context, req *pb.GetRequest, res *pb.Response) error {
-	consignments := s.repo.GetAll()
-	res.Consignments = consignments
-	return nil
-}
-
 func main() {
-	repo := &ConsignmentRepository{}
+
+	// Database host from the environment variables
+	host := os.Getenv("DB_HOST")
+
+	if host == "" {
+		host = defaultHost
+	}
+
+	session, err := CreateSession(host)
+
+	// Mgo creates a 'master' session, we need to end that session
+	// before the main function closes.
+	defer session.Close()
+
+	if err != nil {
+
+		// We're wrapping the error returned from our CreateSession
+		// here to add some context to the error.
+		log.Panicf("Could not connect to datastore with host %s - %v", host, err)
+	}
 
 	// Create a new service. Optionally include some options here.
 	srv := micro.NewService(
@@ -81,9 +49,13 @@ func main() {
 
 	vesselClient := vesselProto.NewVesselServiceClient("go.micro.srv.vessel", srv.Client())
 
+	// Init will parse the command line flags.
 	srv.Init()
-	pb.RegisterShippingServiceHandler(srv.Server(), &service{repo, vesselClient})
 
+	// Register handler
+	pb.RegisterShippingServiceHandler(srv.Server(), &service{session, vesselClient})
+
+	// Run the server
 	if err := srv.Run(); err != nil {
 		fmt.Println(err)
 	}

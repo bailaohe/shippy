@@ -12,7 +12,6 @@ import (
 
 	microclient "github.com/micro/go-micro/client"
 	"github.com/micro/go-micro/cmd"
-	"google.golang.org/grpc/credentials/alts/core/conn"
 )
 const (
 	defaultFilename = "consignment.json"
